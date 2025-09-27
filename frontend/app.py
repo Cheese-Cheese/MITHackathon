@@ -5,6 +5,7 @@ import io
 import base64
 import pandas as pd
 import datetime
+from streamlit_image_comparison import image_comparison
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -16,89 +17,7 @@ st.set_page_config(
 # --- Custom CSS ---
 st.markdown("""
 <style>
-    /* Main App Styling */
-    .stApp {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    }
-    
-    /* Main content area */
-    .main .block-container {
-        padding-top: 2rem;
-        padding-bottom: 2rem;
-    }
-
-    /* Card Styling */
-    .st-emotion-cache-183lzff { /* This is a common class for Streamlit containers */
-        background: rgba(255, 255, 255, 0.95);
-        backdrop-filter: blur(20px);
-        border-radius: 20px;
-        padding: 25px;
-        box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1);
-        border: 1px solid rgba(255, 255, 255, 0.2);
-    }
-    
-    /* Header Styling */
-    .header {
-        background: rgba(255, 255, 255, 0.95);
-        backdrop-filter: blur(20px);
-        border-radius: 20px;
-        padding: 1rem 1.5rem;
-        margin-bottom: 2rem;
-        box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1);
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-    
-    .logo-section {
-        display: flex;
-        align-items: center;
-        gap: 15px;
-    }
-    
-    .logo {
-        width: 50px;
-        height: 50px;
-        background: linear-gradient(135deg, #2563eb, #1e40af);
-        border-radius: 12px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: white;
-        font-weight: bold;
-        font-size: 20px;
-    }
-    
-    .app-title {
-        font-size: 28px;
-        font-weight: 700;
-        color: #111827;
-    }
-    
-    .status-indicator {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 8px 16px;
-        background: rgba(22, 163, 74, 0.1);
-        border: 1px solid #16a34a;
-        border-radius: 20px;
-        color: #16a34a;
-        font-size: 14px;
-        font-weight: 500;
-    }
-    /* Style for sidebar buttons */
-    .stButton>button {
-        width: 100%;
-        border-radius: 0.5rem;
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        background-color: transparent;
-        margin-bottom: 0.5rem;
-    }
-    .stButton>button:hover {
-        background-color: rgba(255, 255, 255, 0.1);
-        border-color: #764ba2;
-    }
+/* ... (your existing CSS) ... */
 </style>
 """, unsafe_allow_html=True)
 
@@ -118,13 +37,13 @@ def analyze_wound(patient_id, uploaded_file, is_diabetic):
             response = requests.post(BACKEND_URL_PREDICT, files=files, data=data)
             if response.status_code == 200:
                 st.session_state.analysis_results = response.json()
-                fetch_history(patient_id) 
+                fetch_history(patient_id)
             else:
-                # Show the specific error message from the backend's JSON response
-                error_detail = response.json().get('error', 'Unknown error')
-                st.error(f"Error from server ({response.status_code}): {error_detail}")
+                st.error(f"Error from server ({response.status_code}): {response.json().get('error', 'Unknown error')}")
+        except requests.exceptions.JSONDecodeError:
+            st.error("Error: Backend returned an invalid response. Check the backend terminal for a traceback.")
         except requests.exceptions.RequestException as e:
-            st.error(f"Connection Error: {e}")
+            st.error(f"Connection Error: Could not reach the backend. Is it running? Details: {e}")
 
 def fetch_history(patient_id):
     try:
@@ -148,10 +67,8 @@ def display_header():
 # --- Main Application View (Dashboard) ---
 def analysis_dashboard(patient_id_to_show):
     st.header(f"Dashboard for Patient: `{patient_id_to_show}`")
-    
     warning_placeholder = st.empty()
     infection_placeholder = st.empty()
-
     col1, col2, col3 = st.columns([1, 2, 1])
 
     with col1:
@@ -173,29 +90,35 @@ def analysis_dashboard(patient_id_to_show):
                 st.info("Two scans needed for a healing score.")
 
     with col2:
-        st.subheader("🖼️ Image & Analysis")
+        st.subheader("🖼️ Interactive Analysis")
         if 'analysis_results' in st.session_state and 'uploaded_image_data' in st.session_state:
-            sub_col_orig, sub_col_mask = st.columns(2)
-            with sub_col_orig:
-                st.image(st.session_state.uploaded_image_data, caption='Original Image', use_column_width=True)
-            with sub_col_mask:
-                st.image(base64.b64decode(st.session_state.analysis_results['mask']), caption='Predicted Wound Mask', use_column_width=True)
+            # --- FIX: Convert the stored bytes data back into PIL Image objects ---
+            original_image = Image.open(io.BytesIO(st.session_state.uploaded_image_data))
+            mask_image = Image.open(io.BytesIO(base64.b64decode(st.session_state.analysis_results['mask'])))
+            
+            image_comparison(
+                img1=original_image,
+                img2=mask_image,
+                label1="Original Image",
+                label2="AI Mask",
+                width=700,
+                starting_position=50,
+                show_labels=True,
+            )
         elif uploaded_file:
-            st.image(uploaded_file, caption='Image Pending Analysis', use_column_width=True)
+            st.image(uploaded_file, caption='Image Pending Analysis')
         else:
-            st.info("Upload an image to see the analysis here.")
+            st.info("Upload an image to see the interactive analysis.")
             
     with col3:
         st.subheader("📊 Results & History")
         if 'analysis_results' in st.session_state:
             results = st.session_state.analysis_results
-            
             healing_warning = results.get('warning')
             infection_warning = results.get('infection_warning')
             
             if infection_warning:
                 infection_placeholder.error(f"🚨 **INFECTION SUSPECTED:** {infection_warning}", icon="🚨")
-            
             if healing_warning:
                 if "Alert" in healing_warning:
                     warning_placeholder.error(f"🚨 {healing_warning}", icon="🚨")
@@ -203,26 +126,27 @@ def analysis_dashboard(patient_id_to_show):
                     warning_placeholder.warning(f"⚠️ {healing_warning}", icon="⚠️")
             
             st.metric("Wound Area (% of image)", f"{results.get('area', 0)}%")
-            
-            st.write("Wound Component Classification:")
+            st.write("Color Analysis:")
             sub_col_red, sub_col_pus = st.columns(2)
-            with sub_col_red:
-                st.metric("Redness Score", f"{results.get('redness_score', 0)}%")
-            with sub_col_pus:
-                st.metric("Pus/Slough Score", f"{results.get('pus_score', 0)}%")
-
+            sub_col_red.metric("Redness Score", f"{results.get('redness_score', 0)}%")
+            sub_col_pus.metric("Pus/Slough Score", f"{results.get('pus_score', 0)}%")
             if results.get('tissue_analysis'):
                 st.subheader("Tissue Type Analysis")
                 st.bar_chart(results['tissue_analysis'])
             st.markdown("---")
 
         if 'history_data' in st.session_state:
-            st.subheader("Healing History")
+            st.subheader("Healing Trend Charts")
             history = st.session_state.history_data
             if history:
                 df = pd.DataFrame(history)
                 df['date'] = pd.to_datetime(df['timestamp'], unit='s')
+                st.write("**Wound Area (%)**")
                 st.line_chart(df, x='date', y='area')
+                st.write("**Color Analysis (%)**")
+                st.line_chart(df, x='date', y=['redness_score', 'pus_score'])
+                st.write("**Tissue Composition (%)**")
+                st.area_chart(df, x='date', y=['healthy_tissue', 'infected_tissue'])
             else:
                 st.info("No history found for this patient yet.")
 
@@ -241,9 +165,7 @@ def doctor_view():
                 status_icon = "🟢 "
                 if patient['status'] == 1: status_icon = "⚠️ "
                 elif patient['status'] == 2: status_icon = "🚨 "
-                
                 diabetic_icon = "🩸" if patient['is_diabetic'] else ""
-                
                 return f"{status_icon}{patient['id']} {diabetic_icon}"
             
             patient_display_names = [format_patient_name(p) for p in patient_list_data]
@@ -251,7 +173,6 @@ def doctor_view():
             
             if selected_display_name:
                 selected_patient_id = selected_display_name.split(" ")[1]
-
                 if st.session_state.get("current_patient") != selected_patient_id:
                     st.session_state.current_patient = selected_patient_id
                     keys_to_clear = ['history_data', 'analysis_results', 'uploaded_image_data']
@@ -288,21 +209,18 @@ def login_page():
 
 # --- Main App Router ---
 display_header()
-
 if 'role' not in st.session_state:
     st.session_state.role = "Home"
 
 with st.sidebar:
     st.title("Navigation")
     previous_role = st.session_state.role
-
     if st.button("🏠 Home", use_container_width=True):
         st.session_state.role = "Home"
     if st.button("👨‍⚕️ Doctor Dashboard", use_container_width=True):
         st.session_state.role = "Doctor"
     if st.button("👤 Patient Portal", use_container_width=True):
         st.session_state.role = "Patient"
-
     if st.session_state.role != previous_role:
         keys_to_clear = ['analysis_results', 'history_data', 'patient_id', 'current_patient', 'uploaded_image_data']
         for key in keys_to_clear:
