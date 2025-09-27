@@ -16,9 +16,23 @@ st.set_page_config(
 # --- Custom CSS ---
 st.markdown("""
 <style>
-/* ... (your existing CSS goes here, no changes needed) ... */
+/* ... (your existing CSS goes here) ... */
+
+/* Style for sidebar buttons */
+.stButton>button {
+    width: 100%;
+    border-radius: 0.5rem;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background-color: transparent;
+    margin-bottom: 0.5rem;
+}
+.stButton>button:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+    border-color: #764ba2;
+}
 </style>
 """, unsafe_allow_html=True)
+
 
 # --- Backend URLs ---
 BACKEND_URL_PREDICT = 'http://127.0.0.1:5000/predict'
@@ -27,25 +41,21 @@ BACKEND_URL_PATIENTS = 'http://127.0.0.1:5000/patients'
 
 # --- API Functions ---
 def analyze_wound(patient_id, uploaded_file):
-    # --- NEW: Store the uploaded image in the session state so we don't lose it ---
     st.session_state.uploaded_image_data = uploaded_file.getvalue()
-    
     with st.spinner('Analyzing wound...'):
         try:
-            # Use the stored image data for the request
             files = {'file': (uploaded_file.name, st.session_state.uploaded_image_data, uploaded_file.type)}
             data = {'patient_id': patient_id}
             response = requests.post(BACKEND_URL_PREDICT, files=files, data=data)
             if response.status_code == 200:
                 st.session_state.analysis_results = response.json()
-                fetch_history(patient_id)
+                fetch_history(patient_id) 
             else:
                 st.error(f"Error from server: {response.status_code}")
         except requests.exceptions.RequestException as e:
             st.error(f"Connection Error: {e}")
 
 def fetch_history(patient_id):
-    # ... (this function remains the same) ...
     try:
         response = requests.get(BACKEND_URL_HISTORY, params={'patient_id': patient_id})
         if response.status_code == 200:
@@ -57,7 +67,6 @@ def fetch_history(patient_id):
 
 # --- UI Components ---
 def display_header():
-    # ... (this function remains the same) ...
     st.markdown("""
     <div class="header">
         <div class="logo-section"><div class="logo">W+</div><div class="app-title">WoundCare AI</div></div>
@@ -65,14 +74,13 @@ def display_header():
     </div>
     """, unsafe_allow_html=True)
 
-# --- Main Application View (Dashboard) ---
+# --- Main Application View ---
 def analysis_dashboard(patient_id_to_show):
     st.header(f"Dashboard for Patient: `{patient_id_to_show}`")
     warning_placeholder = st.empty()
     col1, col2, col3 = st.columns([1, 2, 1])
 
     with col1:
-        # ... (this column's code remains the same) ...
         st.subheader("🎛️ New Analysis")
         uploaded_file = st.file_uploader("Upload New Wound Image", type=["jpg", "jpeg", "png"], key=f"uploader_{patient_id_to_show}")
         if st.button("Analyze Wound", use_container_width=True, type="primary", disabled=(uploaded_file is None)):
@@ -88,29 +96,20 @@ def analysis_dashboard(patient_id_to_show):
             else:
                 st.info("Two scans needed for a healing score.")
 
-    # --- UPDATED: Center panel now shows images side-by-side ---
     with col2:
         st.subheader("🖼️ Image & Analysis")
-        # Case 1: Analysis is done, show side-by-side
         if 'analysis_results' in st.session_state and 'uploaded_image_data' in st.session_state:
             sub_col_orig, sub_col_mask = st.columns(2)
             with sub_col_orig:
                 st.image(st.session_state.uploaded_image_data, caption='Original Image', use_column_width=True)
             with sub_col_mask:
-                st.image(
-                    base64.b64decode(st.session_state.analysis_results['mask']),
-                    caption='Predicted Wound Mask',
-                    use_column_width=True
-                )
-        # Case 2: Image is uploaded, but not yet analyzed
+                st.image(base64.b64decode(st.session_state.analysis_results['mask']), caption='Predicted Wound Mask', use_column_width=True)
         elif uploaded_file:
             st.image(uploaded_file, caption='Image Pending Analysis', use_column_width=True)
-        # Case 3: Nothing has been done yet
         else:
             st.info("Upload an image to see the analysis here.")
             
     with col3:
-        # ... (this column's code remains the same) ...
         st.subheader("📊 Results & History")
         if 'analysis_results' in st.session_state:
             results = st.session_state.analysis_results
@@ -136,7 +135,6 @@ def analysis_dashboard(patient_id_to_show):
 
 # --- Page Views ---
 def doctor_view():
-    # ... (this function remains the same) ...
     st.title("👨‍⚕️ Doctor Dashboard")
     try:
         response = requests.get(BACKEND_URL_PATIENTS)
@@ -168,7 +166,6 @@ def doctor_view():
         st.error(f"Connection Error: {e}")
 
 def patient_view():
-    # ... (this function remains the same) ...
     st.title("👤 Patient Portal")
     with st.form("patient_form"):
         patient_id_input = st.text_input("Enter Your Patient ID and press Enter")
@@ -186,7 +183,6 @@ def patient_view():
         analysis_dashboard(st.session_state.patient_id)
         
 def login_page():
-    # ... (this function remains the same) ...
     st.title("Welcome to WoundCare AI")
     st.write("Please select your role from the sidebar to begin.")
     st.info("Note: This is a demo and does not have a secure login system.")
@@ -195,22 +191,36 @@ def login_page():
 display_header()
 
 if 'role' not in st.session_state:
-    st.session_state.role = None
+    st.session_state.role = "Home"
 
+# --- UPDATED: Sidebar now uses buttons for navigation ---
 with st.sidebar:
     st.title("Navigation")
-    role = st.radio("Select Your Role:", ["Home", "Doctor", "Patient"], index=0)
-    if role != st.session_state.role:
-        st.session_state.role = role
+    
+    # Store the current role to check if it changes
+    previous_role = st.session_state.role
+
+    if st.button("🏠 Home", use_container_width=True):
+        st.session_state.role = "Home"
+
+    if st.button("👨‍⚕️ Doctor Dashboard", use_container_width=True):
+        st.session_state.role = "Doctor"
+
+    if st.button("👤 Patient Portal", use_container_width=True):
+        st.session_state.role = "Patient"
+
+    # If the role was changed by a button click, clear old data and rerun
+    if st.session_state.role != previous_role:
         keys_to_clear = ['analysis_results', 'history_data', 'patient_id', 'current_patient', 'uploaded_image_data']
         for key in keys_to_clear:
             if key in st.session_state:
                 del st.session_state[key]
         st.rerun()
 
+# Routing logic
 if st.session_state.role == "Doctor":
     doctor_view()
 elif st.session_state.role == "Patient":
     patient_view()
-else:
+else: # Default to Home
     login_page()
