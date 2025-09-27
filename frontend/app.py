@@ -17,7 +17,89 @@ st.set_page_config(
 # --- Custom CSS ---
 st.markdown("""
 <style>
-/* ... (your existing CSS) ... */
+    /* Main App Styling */
+    .stApp {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+    
+    /* Main content area */
+    .main .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+    }
+
+    /* Card Styling */
+    .st-emotion-cache-183lzff { /* This is a common class for Streamlit containers */
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(20px);
+        border-radius: 20px;
+        padding: 25px;
+        box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+    
+    /* Header Styling */
+    .header {
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(20px);
+        border-radius: 20px;
+        padding: 1rem 1.5rem;
+        margin-bottom: 2rem;
+        box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    
+    .logo-section {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+    }
+    
+    .logo {
+        width: 50px;
+        height: 50px;
+        background: linear-gradient(135deg, #2563eb, #1e40af);
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: bold;
+        font-size: 20px;
+    }
+    
+    .app-title {
+        font-size: 28px;
+        font-weight: 700;
+        color: #111827;
+    }
+    
+    .status-indicator {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 16px;
+        background: rgba(22, 163, 74, 0.1);
+        border: 1px solid #16a34a;
+        border-radius: 20px;
+        color: #16a34a;
+        font-size: 14px;
+        font-weight: 500;
+    }
+    /* Style for sidebar buttons */
+    .stButton>button {
+        width: 100%;
+        border-radius: 0.5rem;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        background-color: transparent;
+        margin-bottom: 0.5rem;
+    }
+    .stButton>button:hover {
+        background-color: rgba(255, 255, 255, 0.1);
+        border-color: #764ba2;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -30,14 +112,14 @@ BACKEND_URL_PATIENTS = 'http://127.0.0.1:5000/patients'
 # --- API Functions ---
 def analyze_wound(patient_id, uploaded_file, is_diabetic):
     st.session_state.uploaded_image_data = uploaded_file.getvalue()
-    with st.spinner('Analyzing wound...'):
+    with st.spinner('Analyzing wound... This may take a moment.'):
         try:
             files = {'file': (uploaded_file.name, st.session_state.uploaded_image_data, uploaded_file.type)}
             data = {'patient_id': patient_id, 'is_diabetic': str(is_diabetic)}
             response = requests.post(BACKEND_URL_PREDICT, files=files, data=data)
             if response.status_code == 200:
                 st.session_state.analysis_results = response.json()
-                fetch_history(patient_id)
+                fetch_history(patient_id) 
             else:
                 st.error(f"Error from server ({response.status_code}): {response.json().get('error', 'Unknown error')}")
         except requests.exceptions.JSONDecodeError:
@@ -67,14 +149,21 @@ def display_header():
 # --- Main Application View (Dashboard) ---
 def analysis_dashboard(patient_id_to_show):
     st.header(f"Dashboard for Patient: `{patient_id_to_show}`")
+    
     warning_placeholder = st.empty()
     infection_placeholder = st.empty()
+
     col1, col2, col3 = st.columns([1, 2, 1])
 
     with col1:
         st.subheader("🎛️ New Analysis")
         is_diabetic_checkbox = st.checkbox("Patient has diabetes", key=f"diabetic_{patient_id_to_show}")
-        uploaded_file = st.file_uploader("Upload New Wound Image", type=["jpg", "jpeg", "png"], key=f"uploader_{patient_id_to_show}")
+        uploaded_file = st.file_uploader(
+            "Upload New Wound Image",
+            type=["jpg", "jpeg", "png"],
+            key=f"uploader_{patient_id_to_show}",
+            help="For accurate area measurement, please place a 1cm x 1cm green object next to the wound."
+        )
         if st.button("Analyze Wound", use_container_width=True, type="primary", disabled=(uploaded_file is None)):
             analyze_wound(patient_id_to_show, uploaded_file, is_diabetic_checkbox)
         
@@ -92,7 +181,6 @@ def analysis_dashboard(patient_id_to_show):
     with col2:
         st.subheader("🖼️ Interactive Analysis")
         if 'analysis_results' in st.session_state and 'uploaded_image_data' in st.session_state:
-            # --- FIX: Convert the stored bytes data back into PIL Image objects ---
             original_image = Image.open(io.BytesIO(st.session_state.uploaded_image_data))
             mask_image = Image.open(io.BytesIO(base64.b64decode(st.session_state.analysis_results['mask'])))
             
@@ -114,22 +202,27 @@ def analysis_dashboard(patient_id_to_show):
         st.subheader("📊 Results & History")
         if 'analysis_results' in st.session_state:
             results = st.session_state.analysis_results
+            
             healing_warning = results.get('warning')
             infection_warning = results.get('infection_warning')
             
             if infection_warning:
                 infection_placeholder.error(f"🚨 **INFECTION SUSPECTED:** {infection_warning}", icon="🚨")
+            
             if healing_warning:
                 if "Alert" in healing_warning:
                     warning_placeholder.error(f"🚨 {healing_warning}", icon="🚨")
                 else:
                     warning_placeholder.warning(f"⚠️ {healing_warning}", icon="⚠️")
             
-            st.metric("Wound Area (% of image)", f"{results.get('area', 0)}%")
+            st.metric("Wound Area (cm²)", f"{results.get('area_cm2', 0):.2f} cm²")
+            st.metric("Wound Area (% of image)", f"{results.get('area_percent', 0)}%")
+            
             st.write("Color Analysis:")
             sub_col_red, sub_col_pus = st.columns(2)
             sub_col_red.metric("Redness Score", f"{results.get('redness_score', 0)}%")
             sub_col_pus.metric("Pus/Slough Score", f"{results.get('pus_score', 0)}%")
+            
             if results.get('tissue_analysis'):
                 st.subheader("Tissue Type Analysis")
                 st.bar_chart(results['tissue_analysis'])
@@ -141,10 +234,13 @@ def analysis_dashboard(patient_id_to_show):
             if history:
                 df = pd.DataFrame(history)
                 df['date'] = pd.to_datetime(df['timestamp'], unit='s')
-                st.write("**Wound Area (%)**")
+
+                st.write("**Wound Area (cm²)**")
                 st.line_chart(df, x='date', y='area')
+                
                 st.write("**Color Analysis (%)**")
                 st.line_chart(df, x='date', y=['redness_score', 'pus_score'])
+
                 st.write("**Tissue Composition (%)**")
                 st.area_chart(df, x='date', y=['healthy_tissue', 'infected_tissue'])
             else:
