@@ -102,3 +102,31 @@ pip install streamlit Pillow requests pandas fpdf2 streamlit-image-comparison ma
 # 4. Run the Streamlit app
 streamlit run app.py
 ```
+
+## 📖 How to Use
+
+   Select a Role: Use the sidebar to choose between the Doctor or Patient view.
+
+1. Doctor View:
+
+   * A dropdown will show all patients in the system.
+
+   * Patients are flagged with icons: 🩸 for diabetic, ⚠️ for stalled healing, and 🚨 for wound regression.
+
+   * Select a patient to view their full analysis dashboard.
+
+2. Patient View:
+
+   * Enter a specific Patient ID to view your personal dashboard.
+
+3. Performing an Analysis:
+
+   * Place a 1cm x 1cm flat green object next to the wound before taking a photo.
+
+   * Check the "Patient has diabetes" box if applicable for stricter monitoring.
+
+   * Upload the image and click "Analyze Wound".
+
+   * View the interactive mask, metrics, and historical trend charts.
+
+   * Click "Download Report (PDF)" to get a shareable summary.
