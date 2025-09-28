@@ -6,6 +6,8 @@ import base64
 import pandas as pd
 import datetime
 from streamlit_image_comparison import image_comparison
+from fpdf import FPDF
+import matplotlib.pyplot as plt
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -73,6 +75,103 @@ BACKEND_URL_PREDICT = 'http://127.0.0.1:5000/predict'
 BACKEND_URL_HISTORY = 'http://127.0.0.1:5000/history'
 BACKEND_URL_PATIENTS = 'http://127.0.0.1:5000/patients'
 BACKEND_URL_TRAJECTORY = 'http://127.0.0.1:5000/predict_trajectory'
+
+# --- PDF Generation Function ---
+class PDF(FPDF):
+    def header(self):
+        self.set_font('Arial', 'B', 12)
+        self.cell(0, 10, 'WoundCare AI - Analysis Report', 0, 1, 'C')
+        self.ln(10)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font('Arial', 'I', 8)
+        self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
+
+def create_report(patient_id, analysis_results, history_data, trajectory_data, original_image_bytes):
+    pdf = PDF()
+    pdf.add_page()
+    
+    # Report Info
+    pdf.set_font('Arial', 'B', 12)
+    pdf.cell(40, 10, 'Patient ID:')
+    pdf.set_font('Arial', '', 12)
+    pdf.cell(0, 10, patient_id, 0, 1)
+    
+    pdf.set_font('Arial', 'B', 12)
+    pdf.cell(40, 10, 'Analysis Date:')
+    pdf.set_font('Arial', '', 12)
+    pdf.cell(0, 10, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 0, 1)
+    pdf.ln(10)
+
+    # Images
+    try:
+        original_image = Image.open(io.BytesIO(original_image_bytes))
+        mask_image = Image.open(io.BytesIO(base64.b64decode(analysis_results['mask'])))
+        
+        pdf.image(original_image, x=10, y=pdf.get_y(), w=80, title="Original Image")
+        pdf.image(mask_image, x=110, y=pdf.get_y(), w=80, title="Masked Image")
+        pdf.ln(85) 
+    except Exception as e:
+        pdf.cell(0, 10, f"Error loading images for PDF: {e}", 0, 1)
+
+    # Analysis Summary
+    pdf.set_font('Arial', 'B', 14)
+    pdf.cell(0, 10, 'Analysis Summary', 0, 1, 'L')
+    pdf.set_font('Arial', '', 12)
+    
+    metrics = {
+        "Wound Area (cm²)": f"{analysis_results.get('area_cm2', 0):.2f} cm²",
+        "Wound Area (% of image)": f"{analysis_results.get('area_percent', 0)}%",
+        "Redness Score": f"{analysis_results.get('redness_score', 0)}%",
+        "Pus/Slough Score": f"{analysis_results.get('pus_score', 0)}%"
+    }
+    for key, value in metrics.items():
+        pdf.set_font('Arial', 'B', 10)
+        pdf.cell(60, 8, key + ":")
+        pdf.set_font('Arial', '', 10)
+        pdf.cell(0, 8, value, 0, 1)
+    
+    # Warnings
+    for warning_key, warning_type in [('infection_warning', 'INFECTION'), ('warning', 'HEALING')]:
+        if analysis_results.get(warning_key):
+            pdf.set_font('Arial', 'B', 10)
+            pdf.set_text_color(220, 50, 50)
+            pdf.multi_cell(0, 5, f"ALERT ({warning_type}): {analysis_results[warning_key]}", 0, 'L')
+            pdf.set_text_color(0, 0, 0)
+    pdf.ln(5)
+
+    # History Chart
+    if history_data:
+        pdf.set_font('Arial', 'B', 14)
+        pdf.cell(0, 10, 'Healing Trend Chart', 0, 1, 'L')
+        
+        df_actual = pd.DataFrame(history_data)
+        df_actual['date'] = pd.to_datetime(df_actual['timestamp'], unit='s')
+        
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.plot(df_actual['date'], df_actual['area'], marker='o', linestyle='-', label='Actual Area')
+        
+        if trajectory_data:
+            df_pred = pd.DataFrame(trajectory_data)
+            df_pred['date'] = pd.to_datetime(df_pred['timestamp'], unit='s')
+            ax.plot(df_pred['date'], df_pred['area'], marker='x', linestyle='--', label='Predicted Area')
+
+        ax.set_xlabel("Date")
+        ax.set_ylabel("Wound Area (cm²)")
+        ax.set_title("Wound Area Over Time")
+        ax.grid(True)
+        ax.legend()
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+        
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=150)
+        buf.seek(0)
+        pdf.image(buf, x=10, w=190)
+        plt.close(fig)
+
+    return pdf.output(dest='S')
 
 # --- API Functions ---
 def analyze_wound(patient_id, uploaded_file, is_diabetic):
@@ -142,6 +241,31 @@ def analysis_dashboard(patient_id_to_show):
         if st.button("Analyze Wound", use_container_width=True, type="primary", disabled=(uploaded_file is None)):
             analyze_wound(patient_id_to_show, uploaded_file, is_diabetic_checkbox)
         
+        st.markdown("---")
+        report_disabled = 'analysis_results' not in st.session_state
+        
+        # --- THIS IS THE FIX ---
+        # The data must be generated outside the if-block for the button to be created.
+        # Then, we check if the button should be disabled.
+        report_data = b'' # Default empty bytes
+        if not report_disabled:
+            report_data = create_report(
+                patient_id=patient_id_to_show,
+                analysis_results=st.session_state.get('analysis_results', {}),
+                history_data=st.session_state.get('history_data', []),
+                trajectory_data=fetch_trajectory(patient_id_to_show),
+                original_image_bytes=st.session_state.get('uploaded_image_data')
+            )
+        
+        st.download_button(
+            label="📄 Download Report (PDF)",
+            data=io.BytesIO(report_data), # Wrap in BytesIO for compatibility
+            file_name=f"WoundReport_{patient_id_to_show}_{datetime.date.today()}.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+            disabled=report_disabled
+        )
+        
         if 'history_data' in st.session_state and st.session_state.history_data:
             st.subheader("📈 Healing Score")
             history = st.session_state.history_data
@@ -199,27 +323,18 @@ def analysis_dashboard(patient_id_to_show):
                 df_actual = pd.DataFrame(history)
                 df_actual['date'] = pd.to_datetime(df_actual['timestamp'], unit='s')
                 df_actual['type'] = 'Actual'
-
                 trajectory_data = fetch_trajectory(patient_id_to_show)
                 if trajectory_data:
                     df_predicted = pd.DataFrame(trajectory_data)
                     df_predicted['date'] = pd.to_datetime(df_predicted['timestamp'], unit='s')
                     df_predicted['type'] = 'Predicted'
-                    
-                    # --- FIX: Only combine the columns needed for the chart ---
-                    df_combined = pd.concat([
-                        df_actual[['date', 'area', 'type']],
-                        df_predicted[['date', 'area', 'type']]
-                    ])
+                    df_combined = pd.concat([df_actual[['date', 'area', 'type']], df_predicted[['date', 'area', 'type']]])
                 else:
                     df_combined = df_actual
-
                 st.write("**Wound Area (cm²)**")
                 st.line_chart(df_combined, x='date', y='area', color='type')
-                
                 st.write("**Color Analysis (%)**")
                 st.line_chart(df_actual, x='date', y=['redness_score', 'pus_score'])
-
                 st.write("**Tissue Composition (%)**")
                 st.area_chart(df_actual, x='date', y=['healthy_tissue', 'infected_tissue'])
             else:
