@@ -92,7 +92,6 @@ def create_report(patient_id, analysis_results, history_data, trajectory_data, o
     pdf = PDF()
     pdf.add_page()
     
-    # Report Info
     pdf.set_font('Arial', 'B', 12)
     pdf.cell(40, 10, 'Patient ID:')
     pdf.set_font('Arial', '', 12)
@@ -104,7 +103,6 @@ def create_report(patient_id, analysis_results, history_data, trajectory_data, o
     pdf.cell(0, 10, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 0, 1)
     pdf.ln(10)
 
-    # Images
     try:
         original_image = Image.open(io.BytesIO(original_image_bytes))
         mask_image = Image.open(io.BytesIO(base64.b64decode(analysis_results['mask'])))
@@ -115,7 +113,6 @@ def create_report(patient_id, analysis_results, history_data, trajectory_data, o
     except Exception as e:
         pdf.cell(0, 10, f"Error loading images for PDF: {e}", 0, 1)
 
-    # Analysis Summary
     pdf.set_font('Arial', 'B', 14)
     pdf.cell(0, 10, 'Analysis Summary', 0, 1, 'L')
     pdf.set_font('Arial', '', 12)
@@ -132,7 +129,6 @@ def create_report(patient_id, analysis_results, history_data, trajectory_data, o
         pdf.set_font('Arial', '', 10)
         pdf.cell(0, 8, value, 0, 1)
     
-    # Warnings
     for warning_key, warning_type in [('infection_warning', 'INFECTION'), ('warning', 'HEALING')]:
         if analysis_results.get(warning_key):
             pdf.set_font('Arial', 'B', 10)
@@ -141,7 +137,6 @@ def create_report(patient_id, analysis_results, history_data, trajectory_data, o
             pdf.set_text_color(0, 0, 0)
     pdf.ln(5)
 
-    # History Chart
     if history_data:
         pdf.set_font('Arial', 'B', 14)
         pdf.cell(0, 10, 'Healing Trend Chart', 0, 1, 'L')
@@ -225,12 +220,16 @@ def display_header():
 # --- Main Application View (Dashboard) ---
 def analysis_dashboard(patient_id_to_show):
     st.header(f"Dashboard for Patient: `{patient_id_to_show}`")
+    
     warning_placeholder = st.empty()
     infection_placeholder = st.empty()
-    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    # --- UPDATED: Swapped the columns ---
+    data_col, image_col = st.columns([1.5, 2]) 
 
-    with col1:
-        st.subheader("🎛️ New Analysis")
+    with data_col:
+        st.subheader("🎛️ Controls & Results")
+        
         is_diabetic_checkbox = st.checkbox("Patient has diabetes", key=f"diabetic_{patient_id_to_show}")
         uploaded_file = st.file_uploader(
             "Upload New Wound Image",
@@ -242,58 +241,7 @@ def analysis_dashboard(patient_id_to_show):
             analyze_wound(patient_id_to_show, uploaded_file, is_diabetic_checkbox)
         
         st.markdown("---")
-        report_disabled = 'analysis_results' not in st.session_state
         
-        # --- THIS IS THE FIX ---
-        # The data must be generated outside the if-block for the button to be created.
-        # Then, we check if the button should be disabled.
-        report_data = b'' # Default empty bytes
-        if not report_disabled:
-            report_data = create_report(
-                patient_id=patient_id_to_show,
-                analysis_results=st.session_state.get('analysis_results', {}),
-                history_data=st.session_state.get('history_data', []),
-                trajectory_data=fetch_trajectory(patient_id_to_show),
-                original_image_bytes=st.session_state.get('uploaded_image_data')
-            )
-        
-        st.download_button(
-            label="📄 Download Report (PDF)",
-            data=io.BytesIO(report_data), # Wrap in BytesIO for compatibility
-            file_name=f"WoundReport_{patient_id_to_show}_{datetime.date.today()}.pdf",
-            mime="application/pdf",
-            use_container_width=True,
-            disabled=report_disabled
-        )
-        
-        if 'history_data' in st.session_state and st.session_state.history_data:
-            st.subheader("📈 Healing Score")
-            history = st.session_state.history_data
-            if len(history) > 1:
-                latest = history[-1]['area']
-                previous = history[-2]['area']
-                change = ((latest - previous) / previous) * -100 if previous > 0 else 0
-                st.metric("Change Since Last Scan", f"{change:.1f}%", f"{change:.1f}% improvement")
-            else:
-                st.info("Two scans needed for a healing score.")
-
-    with col2:
-        st.subheader("🖼️ Interactive Analysis")
-        if 'analysis_results' in st.session_state and 'uploaded_image_data' in st.session_state:
-            original_image = Image.open(io.BytesIO(st.session_state.uploaded_image_data))
-            mask_image = Image.open(io.BytesIO(base64.b64decode(st.session_state.analysis_results['mask'])))
-            image_comparison(
-                img1=original_image, img2=mask_image,
-                label1="Original Image", label2="AI Mask",
-                width=700, starting_position=50, show_labels=True,
-            )
-        elif uploaded_file:
-            st.image(uploaded_file, caption='Image Pending Analysis')
-        else:
-            st.info("Upload an image to see the interactive analysis.")
-            
-    with col3:
-        st.subheader("📊 Results & History")
         if 'analysis_results' in st.session_state:
             results = st.session_state.analysis_results
             healing_warning = results.get('warning')
@@ -305,19 +253,17 @@ def analysis_dashboard(patient_id_to_show):
                     warning_placeholder.error(f"🚨 {healing_warning}", icon="🚨")
                 else:
                     warning_placeholder.warning(f"⚠️ {healing_warning}", icon="⚠️")
+            
             st.metric("Wound Area (cm²)", f"{results.get('area_cm2', 0):.2f} cm²")
             st.metric("Wound Area (% of image)", f"{results.get('area_percent', 0)}%")
             st.write("Color Analysis:")
             sub_col_red, sub_col_pus = st.columns(2)
             sub_col_red.metric("Redness Score", f"{results.get('redness_score', 0)}%")
             sub_col_pus.metric("Pus/Slough Score", f"{results.get('pus_score', 0)}%")
-            if results.get('tissue_analysis'):
-                st.subheader("Tissue Type Analysis")
-                st.bar_chart(results['tissue_analysis'])
             st.markdown("---")
 
         if 'history_data' in st.session_state:
-            st.subheader("Healing Trend Charts")
+            st.subheader("📈 Healing Trends")
             history = st.session_state.history_data
             if history:
                 df_actual = pd.DataFrame(history)
@@ -331,6 +277,7 @@ def analysis_dashboard(patient_id_to_show):
                     df_combined = pd.concat([df_actual[['date', 'area', 'type']], df_predicted[['date', 'area', 'type']]])
                 else:
                     df_combined = df_actual
+
                 st.write("**Wound Area (cm²)**")
                 st.line_chart(df_combined, x='date', y='area', color='type')
                 st.write("**Color Analysis (%)**")
@@ -339,6 +286,40 @@ def analysis_dashboard(patient_id_to_show):
                 st.area_chart(df_actual, x='date', y=['healthy_tissue', 'infected_tissue'])
             else:
                 st.info("No history found for this patient yet.")
+        
+        report_disabled = 'analysis_results' not in st.session_state
+        if not report_disabled:
+            st.markdown("---")
+            with st.spinner("Generating Report..."):
+                report_data = create_report(
+                    patient_id=patient_id_to_show,
+                    analysis_results=st.session_state.get('analysis_results', {}),
+                    history_data=st.session_state.get('history_data', []),
+                    trajectory_data=fetch_trajectory(patient_id_to_show),
+                    original_image_bytes=st.session_state.get('uploaded_image_data')
+                )
+            st.download_button(
+                label="📄 Download Report (PDF)",
+                data=io.BytesIO(report_data),
+                file_name=f"WoundReport_{patient_id_to_show}_{datetime.date.today()}.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
+
+    with image_col:
+        st.subheader("🖼️ Interactive Analysis")
+        if 'analysis_results' in st.session_state and 'uploaded_image_data' in st.session_state:
+            original_image = Image.open(io.BytesIO(st.session_state.uploaded_image_data))
+            mask_image = Image.open(io.BytesIO(base64.b64decode(st.session_state.analysis_results['mask'])))
+            image_comparison(
+                img1=original_image, img2=mask_image,
+                label1="Original Image", label2="AI Mask",
+                width=700, starting_position=50, show_labels=True,
+            )
+        elif uploaded_file is not None:
+            st.image(uploaded_file, caption='Image Pending Analysis')
+        else:
+            st.info("Upload an image to see the interactive analysis.")
 
 # --- Page Views ---
 def doctor_view():
