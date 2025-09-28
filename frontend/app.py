@@ -21,15 +21,8 @@ st.markdown("""
     .stApp {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     }
-    
-    /* Main content area */
-    .main .block-container {
-        padding-top: 2rem;
-        padding-bottom: 2rem;
-    }
-
-    /* Card Styling */
-    .st-emotion-cache-183lzff { /* This is a common class for Streamlit containers */
+    .main .block-container { padding-top: 2rem; padding-bottom: 2rem; }
+    .st-emotion-cache-183lzff {
         background: rgba(255, 255, 255, 0.95);
         backdrop-filter: blur(20px);
         border-radius: 20px;
@@ -37,8 +30,6 @@ st.markdown("""
         box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1);
         border: 1px solid rgba(255, 255, 255, 0.2);
     }
-    
-    /* Header Styling */
     .header {
         background: rgba(255, 255, 255, 0.95);
         backdrop-filter: blur(20px);
@@ -50,56 +41,29 @@ st.markdown("""
         justify-content: space-between;
         align-items: center;
     }
-    
-    .logo-section {
-        display: flex;
-        align-items: center;
-        gap: 15px;
-    }
-    
+    .logo-section { display: flex; align-items: center; gap: 15px; }
     .logo {
-        width: 50px;
-        height: 50px;
+        width: 50px; height: 50px;
         background: linear-gradient(135deg, #2563eb, #1e40af);
         border-radius: 12px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: white;
-        font-weight: bold;
-        font-size: 20px;
+        display: flex; align-items: center; justify-content: center;
+        color: white; font-weight: bold; font-size: 20px;
     }
-    
-    .app-title {
-        font-size: 28px;
-        font-weight: 700;
-        color: #111827;
-    }
-    
+    .app-title { font-size: 28px; font-weight: 700; color: #111827; }
     .status-indicator {
-        display: flex;
-        align-items: center;
-        gap: 8px;
+        display: flex; align-items: center; gap: 8px;
         padding: 8px 16px;
         background: rgba(22, 163, 74, 0.1);
         border: 1px solid #16a34a;
         border-radius: 20px;
-        color: #16a34a;
-        font-size: 14px;
-        font-weight: 500;
+        color: #16a34a; font-size: 14px; font-weight: 500;
     }
-    /* Style for sidebar buttons */
     .stButton>button {
-        width: 100%;
-        border-radius: 0.5rem;
+        width: 100%; border-radius: 0.5rem;
         border: 1px solid rgba(255, 255, 255, 0.2);
-        background-color: transparent;
-        margin-bottom: 0.5rem;
+        background-color: transparent; margin-bottom: 0.5rem;
     }
-    .stButton>button:hover {
-        background-color: rgba(255, 255, 255, 0.1);
-        border-color: #764ba2;
-    }
+    .stButton>button:hover { background-color: rgba(255, 255, 255, 0.1); border-color: #764ba2; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -108,6 +72,7 @@ st.markdown("""
 BACKEND_URL_PREDICT = 'http://127.0.0.1:5000/predict'
 BACKEND_URL_HISTORY = 'http://127.0.0.1:5000/history'
 BACKEND_URL_PATIENTS = 'http://127.0.0.1:5000/patients'
+BACKEND_URL_TRAJECTORY = 'http://127.0.0.1:5000/predict_trajectory'
 
 # --- API Functions ---
 def analyze_wound(patient_id, uploaded_file, is_diabetic):
@@ -137,6 +102,18 @@ def fetch_history(patient_id):
     except requests.exceptions.RequestException as e:
         st.error(f"Connection Error: {e}")
 
+def fetch_trajectory(patient_id):
+    try:
+        response = requests.get(BACKEND_URL_TRAJECTORY, params={'patient_id': patient_id})
+        if response.status_code == 200:
+            return response.json()
+        else:
+            print(f"Could not fetch trajectory: {response.json().get('error', 'Unknown error')}")
+            return []
+    except requests.exceptions.RequestException as e:
+        print(f"Connection Error fetching trajectory: {e}")
+        return []
+
 # --- UI Components ---
 def display_header():
     st.markdown("""
@@ -149,10 +126,8 @@ def display_header():
 # --- Main Application View (Dashboard) ---
 def analysis_dashboard(patient_id_to_show):
     st.header(f"Dashboard for Patient: `{patient_id_to_show}`")
-    
     warning_placeholder = st.empty()
     infection_placeholder = st.empty()
-
     col1, col2, col3 = st.columns([1, 2, 1])
 
     with col1:
@@ -183,15 +158,10 @@ def analysis_dashboard(patient_id_to_show):
         if 'analysis_results' in st.session_state and 'uploaded_image_data' in st.session_state:
             original_image = Image.open(io.BytesIO(st.session_state.uploaded_image_data))
             mask_image = Image.open(io.BytesIO(base64.b64decode(st.session_state.analysis_results['mask'])))
-            
             image_comparison(
-                img1=original_image,
-                img2=mask_image,
-                label1="Original Image",
-                label2="AI Mask",
-                width=700,
-                starting_position=50,
-                show_labels=True,
+                img1=original_image, img2=mask_image,
+                label1="Original Image", label2="AI Mask",
+                width=700, starting_position=50, show_labels=True,
             )
         elif uploaded_file:
             st.image(uploaded_file, caption='Image Pending Analysis')
@@ -202,27 +172,21 @@ def analysis_dashboard(patient_id_to_show):
         st.subheader("📊 Results & History")
         if 'analysis_results' in st.session_state:
             results = st.session_state.analysis_results
-            
             healing_warning = results.get('warning')
             infection_warning = results.get('infection_warning')
-            
             if infection_warning:
                 infection_placeholder.error(f"🚨 **INFECTION SUSPECTED:** {infection_warning}", icon="🚨")
-            
             if healing_warning:
                 if "Alert" in healing_warning:
                     warning_placeholder.error(f"🚨 {healing_warning}", icon="🚨")
                 else:
                     warning_placeholder.warning(f"⚠️ {healing_warning}", icon="⚠️")
-            
             st.metric("Wound Area (cm²)", f"{results.get('area_cm2', 0):.2f} cm²")
             st.metric("Wound Area (% of image)", f"{results.get('area_percent', 0)}%")
-            
             st.write("Color Analysis:")
             sub_col_red, sub_col_pus = st.columns(2)
             sub_col_red.metric("Redness Score", f"{results.get('redness_score', 0)}%")
             sub_col_pus.metric("Pus/Slough Score", f"{results.get('pus_score', 0)}%")
-            
             if results.get('tissue_analysis'):
                 st.subheader("Tissue Type Analysis")
                 st.bar_chart(results['tissue_analysis'])
@@ -232,17 +196,32 @@ def analysis_dashboard(patient_id_to_show):
             st.subheader("Healing Trend Charts")
             history = st.session_state.history_data
             if history:
-                df = pd.DataFrame(history)
-                df['date'] = pd.to_datetime(df['timestamp'], unit='s')
+                df_actual = pd.DataFrame(history)
+                df_actual['date'] = pd.to_datetime(df_actual['timestamp'], unit='s')
+                df_actual['type'] = 'Actual'
+
+                trajectory_data = fetch_trajectory(patient_id_to_show)
+                if trajectory_data:
+                    df_predicted = pd.DataFrame(trajectory_data)
+                    df_predicted['date'] = pd.to_datetime(df_predicted['timestamp'], unit='s')
+                    df_predicted['type'] = 'Predicted'
+                    
+                    # --- FIX: Only combine the columns needed for the chart ---
+                    df_combined = pd.concat([
+                        df_actual[['date', 'area', 'type']],
+                        df_predicted[['date', 'area', 'type']]
+                    ])
+                else:
+                    df_combined = df_actual
 
                 st.write("**Wound Area (cm²)**")
-                st.line_chart(df, x='date', y='area')
+                st.line_chart(df_combined, x='date', y='area', color='type')
                 
                 st.write("**Color Analysis (%)**")
-                st.line_chart(df, x='date', y=['redness_score', 'pus_score'])
+                st.line_chart(df_actual, x='date', y=['redness_score', 'pus_score'])
 
                 st.write("**Tissue Composition (%)**")
-                st.area_chart(df, x='date', y=['healthy_tissue', 'infected_tissue'])
+                st.area_chart(df_actual, x='date', y=['healthy_tissue', 'infected_tissue'])
             else:
                 st.info("No history found for this patient yet.")
 
@@ -256,7 +235,6 @@ def doctor_view():
             if not patient_list_data:
                 st.warning("No patient data found in the system yet.")
                 return
-            
             def format_patient_name(patient):
                 status_icon = "🟢 "
                 if patient['status'] == 1: status_icon = "⚠️ "

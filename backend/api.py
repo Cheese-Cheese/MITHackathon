@@ -10,6 +10,8 @@ import time
 import os
 import cv2
 import json
+import pandas as pd
+from sklearn.linear_model import LinearRegression
 
 app = Flask(__name__)
 CORS(app)
@@ -41,29 +43,19 @@ init_db()
 def analyze_wound_colors(image_array_rgb, mask_array):
     if np.sum(mask_array) == 0:
         return 0, 0
-
     image_array_bgr = cv2.cvtColor(image_array_rgb, cv2.COLOR_RGB2BGR)
     wound_only_bgr = cv2.bitwise_and(image_array_bgr, image_array_bgr, mask=mask_array)
     hsv_wound = cv2.cvtColor(wound_only_bgr, cv2.COLOR_BGR2HSV)
-    
     total_wound_pixels = np.count_nonzero(mask_array)
-    
-    lower_red1 = np.array([0, 70, 50])
-    upper_red1 = np.array([10, 255, 255])
+    lower_red1, upper_red1 = np.array([0, 70, 50]), np.array([10, 255, 255])
     mask_red1 = cv2.inRange(hsv_wound, lower_red1, upper_red1)
-    
-    lower_red2 = np.array([170, 70, 50])
-    upper_red2 = np.array([180, 255, 255])
+    lower_red2, upper_red2 = np.array([170, 70, 50]), np.array([180, 255, 255])
     mask_red2 = cv2.inRange(hsv_wound, lower_red2, upper_red2)
-    
     red_mask = mask_red1 + mask_red2
     redness_score = (np.count_nonzero(red_mask) / total_wound_pixels) * 100
-    
-    lower_pus = np.array([20, 70, 50])
-    upper_pus = np.array([60, 255, 255])
+    lower_pus, upper_pus = np.array([20, 70, 50]), np.array([60, 255, 255])
     pus_mask = cv2.inRange(hsv_wound, lower_pus, upper_pus)
     pus_score = (np.count_nonzero(pus_mask) / total_wound_pixels) * 100
-    
     return round(redness_score, 2), round(pus_score, 2)
 
 def calibrate_and_measure(image_array_rgb, wound_mask_binary):
@@ -73,21 +65,15 @@ def calibrate_and_measure(image_array_rgb, wound_mask_binary):
         upper_green = np.array([85, 255, 255])
         green_mask = cv2.inRange(hsv_image, lower_green, upper_green)
         contours, _ = cv2.findContours(green_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-        
         if not contours:
             return None, None, "Calibration Error: No green patch found in the image."
-
         patch_contour = max(contours, key=cv2.contourArea)
         pixels_per_cm2 = cv2.contourArea(patch_contour)
-        
         if pixels_per_cm2 < 50:
              return None, None, "Calibration Error: Green patch is too small or not detected."
-
         wound_pixel_area = np.sum(wound_mask_binary)
-        
         absolute_area_cm2 = wound_pixel_area / pixels_per_cm2
         relative_area_percent = wound_pixel_area / (image_array_rgb.shape[0] * image_array_rgb.shape[1]) * 100
-        
         return round(absolute_area_cm2, 2), round(relative_area_percent, 2), None
     except Exception as e:
         return None, None, f"Calibration Error: {str(e)}"
@@ -98,19 +84,14 @@ def check_healing_progress(patient_id, is_diabetic):
     cursor.execute("SELECT area FROM measurements WHERE patient_id = ? ORDER BY timestamp DESC LIMIT 2", (patient_id,))
     rows = cursor.fetchall()
     conn.close()
-    
     if len(rows) < 2: return 0, None
-        
     latest_area, previous_area = rows[0][0], rows[1][0]
     stall_threshold = 1.0 if is_diabetic else 2.0
-    
     if latest_area > previous_area:
         return 2, f"Alert: Wound area has increased from {previous_area:.2f} cm² to {latest_area:.2f} cm²."
-        
     improvement = ((previous_area - latest_area) / previous_area) * 100 if previous_area > 0 else 0
     if improvement < stall_threshold:
         return 1, f"Warning: Healing has stalled. Improvement is only {improvement:.2f}%."
-        
     return 0, None
 
 def check_infection_proxy(patient_id):
@@ -127,6 +108,28 @@ def check_infection_proxy(patient_id):
         return "High suspicion of infection based on trends."
     return None
 
+def train_and_predict_trajectory(patient_id):
+    conn = sqlite3.connect(DB_FILE)
+    df = pd.read_sql_query(f"SELECT timestamp, area FROM measurements WHERE patient_id = '{patient_id}' ORDER BY timestamp ASC", conn)
+    conn.close()
+    if len(df) < 3:
+        return []
+    df['days'] = (df['timestamp'] - df['timestamp'].min()) / (24 * 3600)
+    X = df[['days']]
+    y = df['area']
+    model = LinearRegression()
+    model.fit(X, y)
+    last_day = df['days'].max()
+    future_days = np.array([last_day + 7, last_day + 14, last_day + 21]).reshape(-1, 1)
+    predicted_areas = model.predict(future_days)
+    last_timestamp = df['timestamp'].max()
+    future_timestamps = [last_timestamp + (d * 24 * 3600) for d in [7, 14, 21]]
+    predictions = []
+    for i in range(len(future_timestamps)):
+        predicted_area = max(0, predicted_areas[i])
+        predictions.append({'timestamp': future_timestamps[i], 'area': predicted_area})
+    return predictions
+
 try:
     model_segmentation = tf.keras.models.load_model('wound_segmentation_model_v1.keras')
     model_classifier = tf.keras.models.load_model('tissue_classifier_model_v1.keras')
@@ -142,53 +145,40 @@ def predict():
         return jsonify({'error': 'One or more AI models failed to load on the server. Check the backend terminal.'}), 500
     if 'file' not in request.files:
         return jsonify({'error': 'No file part'}), 400
-    
     try:
         file = request.files['file']
         patient_id = request.form.get('patient_id', 'default_patient')
         is_diabetic_str = request.form.get('is_diabetic', 'false')
         is_diabetic_bool = True if is_diabetic_str.lower() == 'true' else False
-        
         image = Image.open(file.stream).convert('RGB')
         image_resized_for_model = image.resize((224, 224))
         image_array_rgb = np.array(image_resized_for_model)
-        
         seg_batch = np.expand_dims(image_array_rgb / 255.0, axis=0)
         class_batch = tf.keras.applications.mobilenet_v2.preprocess_input(np.expand_dims(image_array_rgb, axis=0))
-
         predicted_mask = model_segmentation.predict(seg_batch)
         predicted_mask_binary = (predicted_mask[0, :, :, 0] > 0.5).astype(np.uint8)
-        
         absolute_area, relative_area, calibration_error = calibrate_and_measure(image_array_rgb, predicted_mask_binary)
         if calibration_error:
             return jsonify({'error': calibration_error}), 400
-
         redness, pus = analyze_wound_colors(image_array_rgb, predicted_mask_binary)
-        
         predictions = model_classifier.predict(class_batch)
         scores = tf.nn.softmax(predictions[0])
         tissue_results = {class_names[i]: float(scores[i]) * 100 for i in range(len(class_names))}
-        
         warning_level, warning_message = check_healing_progress(patient_id, is_diabetic_bool)
-        
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         tissue_results_json = json.dumps(tissue_results)
-        
         cursor.execute("""
             INSERT INTO measurements (patient_id, timestamp, area, warning_level, is_diabetic, redness_score, pus_score, tissue_analysis) 
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (patient_id, time.time(), absolute_area, warning_level, int(is_diabetic_bool), redness, pus, tissue_results_json))
         conn.commit()
         conn.close()
-        
         infection_warning = check_infection_proxy(patient_id)
-
         mask_image = Image.fromarray(predicted_mask_binary * 255, mode='L')
         buffered = io.BytesIO()
         mask_image.save(buffered, format="PNG")
         img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
-
         return jsonify({
             'mask': img_str,
             'area_cm2': absolute_area,
@@ -206,7 +196,6 @@ def predict():
 def history():
     patient_id = request.args.get('patient_id')
     if not patient_id: return jsonify({'error': 'Patient ID is required'}), 400
-    
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute("""
@@ -217,19 +206,14 @@ def history():
     """, (patient_id,))
     rows = cursor.fetchall()
     conn.close()
-    
     history_data = []
     for row in rows:
         tissue_data = json.loads(row[4]) if row[4] else {}
         history_data.append({
-            'timestamp': row[0],
-            'area': row[1],
-            'redness_score': row[2],
-            'pus_score': row[3],
+            'timestamp': row[0], 'area': row[1], 'redness_score': row[2], 'pus_score': row[3],
             'healthy_tissue': tissue_data.get('Healthy Tissue', 0),
             'infected_tissue': tissue_data.get('Infected/Necrotic', 0)
         })
-    
     return jsonify(history_data)
 
 @app.route('/patients', methods=['GET'])
@@ -249,9 +233,19 @@ def get_all_patients():
     cursor.execute(query)
     rows = cursor.fetchall()
     conn.close()
-    
     patient_data = [{'id': row[0], 'status': row[1], 'is_diabetic': row[2]} for row in rows]
     return jsonify(patient_data)
+
+@app.route('/predict_trajectory', methods=['GET'])
+def trajectory():
+    patient_id = request.args.get('patient_id')
+    if not patient_id:
+        return jsonify({'error': 'Patient ID is required'}), 400
+    try:
+        predictions = train_and_predict_trajectory(patient_id)
+        return jsonify(predictions)
+    except Exception as e:
+        return jsonify({'error': f'Could not generate trajectory: {str(e)}'}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
