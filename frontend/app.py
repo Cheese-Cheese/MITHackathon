@@ -66,6 +66,31 @@ st.markdown("""
         background-color: transparent; margin-bottom: 0.5rem;
     }
     .stButton>button:hover { background-color: rgba(255, 255, 255, 0.1); border-color: #764ba2; }
+    
+    .main-metric {
+        text-align: center;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        background-color: rgba(255, 255, 255, 0.05);
+        margin-bottom: 1.5rem;
+    }
+    .main-metric-label {
+        font-size: 1.1rem;
+        color: #e5e7eb;
+    }
+    .main-metric-value {
+        font-size: 3rem;
+        font-weight: 600;
+        line-height: 1.2;
+        color: #ffffff;
+    }
+    .main-metric-delta {
+        font-size: 1rem;
+        font-weight: 500;
+    }
+    .delta-positive { color: #34D399; }
+    .delta-negative { color: #F87171; }
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -115,7 +140,6 @@ def create_report(patient_id, analysis_results, history_data, trajectory_data, o
 
     pdf.set_font('Arial', 'B', 14)
     pdf.cell(0, 10, 'Analysis Summary', 0, 1, 'L')
-    pdf.set_font('Arial', '', 12)
     
     metrics = {
         "Wound Area (cm²)": f"{analysis_results.get('area_cm2', 0):.2f} cm²",
@@ -224,7 +248,6 @@ def analysis_dashboard(patient_id_to_show):
     warning_placeholder = st.empty()
     infection_placeholder = st.empty()
     
-    # --- UPDATED: Swapped the columns ---
     data_col, image_col = st.columns([1.5, 2]) 
 
     with data_col:
@@ -254,12 +277,42 @@ def analysis_dashboard(patient_id_to_show):
                 else:
                     warning_placeholder.warning(f"⚠️ {healing_warning}", icon="⚠️")
             
-            st.metric("Wound Area (cm²)", f"{results.get('area_cm2', 0):.2f} cm²")
-            st.metric("Wound Area (% of image)", f"{results.get('area_percent', 0)}%")
-            st.write("Color Analysis:")
-            sub_col_red, sub_col_pus = st.columns(2)
-            sub_col_red.metric("Redness Score", f"{results.get('redness_score', 0)}%")
-            sub_col_pus.metric("Pus/Slough Score", f"{results.get('pus_score', 0)}%")
+            # --- UPDATED: Reorganized metrics section ---
+            if 'history_data' in st.session_state and len(st.session_state.history_data) > 1:
+                history = st.session_state.history_data
+                latest_area = history[-1]['area']
+                previous_area = history[-2]['area']
+                improvement = ((previous_area - latest_area) / previous_area) * 100 if previous_area > 0 else 0
+                delta_color_class = "delta-positive" if improvement >= 0 else "delta-negative"
+                delta_symbol = "↑" if improvement >= 0 else "↓"
+                metric_html = f"""
+                <div class="main-metric">
+                    <div class="main-metric-label">Improvement Since Last Scan</div>
+                    <div class="main-metric-value">{improvement:.1f}%</div>
+                    <div class="main-metric-delta {delta_color_class}">{delta_symbol} {abs(improvement):.1f}%</div>
+                </div>
+                """
+                st.markdown(metric_html, unsafe_allow_html=True)
+            else:
+                 # --- NEW: Placeholder for when there's not enough data ---
+                metric_html = """
+                <div class="main-metric">
+                    <div class="main-metric-label">Improvement Since Last Scan</div>
+                    <div class="main-metric-value">--.--%</div>
+                    <div class="main-metric-delta">(2 or more scans required)</div>
+                </div>
+                """
+                st.markdown(metric_html, unsafe_allow_html=True)
+
+            st.write("##### Key Metrics")
+            metric_col1, metric_col2 = st.columns(2)
+            with metric_col1:
+                st.metric("Wound Area (cm²)", f"{results.get('area_cm2', 0):.2f} cm²")
+                st.metric("Redness Score", f"{results.get('redness_score', 0)}%")
+            with metric_col2:
+                st.metric("Wound Area (% of image)", f"{results.get('area_percent', 0)}%")
+                st.metric("Pus/Slough Score", f"{results.get('pus_score', 0)}%")
+            
             st.markdown("---")
 
         if 'history_data' in st.session_state:
@@ -308,6 +361,8 @@ def analysis_dashboard(patient_id_to_show):
 
     with image_col:
         st.subheader("🖼️ Interactive Analysis")
+        # --- FIX: Use uploaded_file variable directly for immediate display ---
+        # The key is checking the local 'uploaded_file' variable, not just session_state
         if 'analysis_results' in st.session_state and 'uploaded_image_data' in st.session_state:
             original_image = Image.open(io.BytesIO(st.session_state.uploaded_image_data))
             mask_image = Image.open(io.BytesIO(base64.b64decode(st.session_state.analysis_results['mask'])))
@@ -317,6 +372,7 @@ def analysis_dashboard(patient_id_to_show):
                 width=700, starting_position=50, show_labels=True,
             )
         elif uploaded_file is not None:
+            # When an image is uploaded but not yet analyzed, show it here
             st.image(uploaded_file, caption='Image Pending Analysis')
         else:
             st.info("Upload an image to see the interactive analysis.")
